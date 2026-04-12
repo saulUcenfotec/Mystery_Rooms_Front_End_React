@@ -1,0 +1,148 @@
+.cipher-board-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1260;
+  overflow-y: auto;
+  padding: 28px;
+  background: linear-gradient(180deg, rgba(7, 18, 37, 0.97), rgba(5, 12, 24, 0.99));
+}
+
+.cipher-board-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  color: #d7edf8;
+}
+
+.cipher-board-copy h2 {
+  margin: 0 0 18px;
+  color: #00d6ff;
+  font-size: clamp(28px, 4vw, 40px);
+}
+
+.cipher-board-copy p {
+  margin: 0 0 18px;
+  color: #a8c3cf;
+  line-height: 1.65;
+  font-size: 18px;
+}
+
+.cipher-board-panel {
+  border: 1px solid rgba(0, 214, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(2, 8, 18, 0.92);
+  padding: 18px;
+}
+
+.cipher-board-title {
+  color: #ffb400;
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  margin-bottom: 18px;
+}
+
+.cipher-board-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.cipher-symbol-box {
+  min-height: 62px;
+  border: 1px solid rgba(0, 214, 255, 0.28);
+  border-radius: 4px;
+  background: rgba(4, 17, 33, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.cipher-symbol {
+  color: #00d6ff;
+  font-size: 21px;
+}
+
+.cipher-letter {
+  color: #ffb400;
+  font-size: 12px;
+}
+
+.cipher-board-substitution,
+.cipher-board-preview {
+  color: #8aa6b4;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.cipher-board-inputs {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 14px;
+}
+
+.cipher-board-inputs label {
+  color: #9ec0cd;
+}
+
+.cipher-board-inputs input {
+  padding: 12px 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.cipher-board-message {
+  min-height: 42px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 4px;
+  background: rgba(0, 214, 255, 0.06);
+  color: #9ec0cd;
+}
+
+.cipher-board-message.success {
+  background: rgba(0, 230, 118, 0.08);
+  color: #8df0ba;
+}
+
+.cipher-board-message.error {
+  background: rgba(255, 44, 103, 0.08);
+  color: #ff8dad;
+}
+
+.cipher-board-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cipher-action {
+  padding: 10px 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #d7edf8;
+  cursor: pointer;
+}
+
+.cipher-action.primary {
+  border-color: rgba(255, 180, 0, 0.4);
+  background: rgba(255, 180, 0, 0.12);
+  color: #ffb400;
+}
+
+@media (max-width: 900px) {
+  .cipher-board-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .cipher-board-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

@@ -1,0 +1,182 @@
+/* ========================================
+   UserNamePrompt.css - Estilos del Modal de Nombre de Usuario
+   ========================================
+   Estilos para el modal que pide el nombre de usuario
+   al entrar a una sala
+   ======================================== */
+
+.username-prompt-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10000;
+  backdrop-filter: blur(5px);
+}
+
+.username-prompt-modal {
+  background: #1a1a2e;
+  border: 2px solid #00d4ff;
+  border-radius: 12px;
+  padding: 30px;
+  max-width: 450px;
+  width: 90%;
+  box-shadow: 0 10px 30px rgba(0, 212, 255, 0.3);
+  animation: modalFadeIn 0.3s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.username-prompt-header {
+  text-align: center;
+  margin-bottom: 25px;
+}
+
+.username-prompt-header h2 {
+  color: #00d4ff;
+  margin: 0 0 10px 0;
+  font-size: 24px;
+}
+
+.username-prompt-header p {
+  color: #aaa;
+  margin: 0;
+  font-size: 14px;
+}
+
+.username-prompt-form {
+  margin-bottom: 20px;
+}
+
+.input-group {
+  margin-bottom: 20px;
+}
+
+.input-group label {
+  display: block;
+  color: #fff;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.input-group input {
+  width: 100%;
+  padding: 12px 15px;
+  background: #0f3460;
+  border: 2px solid #2a2a4a;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 16px;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: #00d4ff;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+
+.input-group input.error {
+  border-color: #ff6b6b;
+}
+
+.input-group input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error-message {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-top: 5px;
+  font-weight: bold;
+}
+
+.username-prompt-actions {
+  display: flex;
+  gap: 15px;
+  justify-content: flex-end;
+}
+
+.btn-cancel,
+.btn-confirm {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 100px;
+}
+
+.btn-cancel {
+  background: #666;
+  color: #fff;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: #888;
+  transform: translateY(-1px);
+}
+
+.btn-confirm {
+  background: linear-gradient(135deg, #00d4ff 0%, #0097a7 100%);
+  color: #000;
+}
+
+.btn-confirm:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 15px rgba(0, 212, 255, 0.4);
+}
+
+.btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.username-prompt-footer {
+  text-align: center;
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #2a2a4a;
+}
+
+.username-prompt-footer small {
+  color: #888;
+  font-size: 12px;
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .username-prompt-modal {
+    padding: 20px;
+    margin: 20px;
+  }
+
+  .username-prompt-actions {
+    flex-direction: column;
+  }
+
+  .btn-cancel,
+  .btn-confirm {
+    width: 100%;
+  }
+}
