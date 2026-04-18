@@ -25,15 +25,12 @@ import {
   createExitDoor,
   createPuzzleStations,
   createPlayerAvatars,
-  syncPlayerPosition,
-  readOtherPlayersPositions,
   updateAvatarPosition,
   updateAvatarLabel,
   updateAvatarRotation
 } from '../utils/three-helpers.js'
-import { changeRoomPlayerCount, deleteRoom, getRoom, touchRoom } from '../services/gameRooms.js'
+import { deleteRoom, getRoom, parseRoomSyncState, touchRoom, updateRoom, updateRoomSyncState } from '../services/gameRooms.js'
 
-// Puzzle modals are loaded on demand so the room scene boots faster.
 const NodePuzzle = lazy(() => import('../pages/NodePuzzle/NodePuzzle.jsx'))
 const VossQuiz = lazy(() => import('./VossQuiz.jsx'))
 const DataReconstructionPuzzle = lazy(() => import('./DataReconstructionPuzzle.jsx'))
@@ -48,7 +45,7 @@ function readSharedSolvedPuzzles(roomName) {
     const stored = localStorage.getItem(getRoomPuzzleStateKey(roomName))
     const parsed = stored ? JSON.parse(stored) : []
     return Array.isArray(parsed) ? parsed : []
-  } catch (error) {
+  } catch {
     return []
   }
 }
@@ -57,10 +54,63 @@ function writeSharedSolvedPuzzles(roomName, solvedPuzzles) {
   localStorage.setItem(getRoomPuzzleStateKey(roomName), JSON.stringify(solvedPuzzles))
 }
 
+function mergeSolvedPuzzles(...puzzleSets) {
+  return Array.from(new Set(puzzleSets.flat().filter(Boolean)))
+}
+
+function syncPlayerPosition(roomName, playerId, camera) {
+  try {
+    const syncKey = `PLAYERS_SYNC:${roomName}`
+    const playersData = JSON.parse(localStorage.getItem(syncKey) || '{}')
+    const userName = sessionStorage.getItem(`PLAYER_NAME:${roomName}:${playerId}`) || `Jugador ${playerId + 1}`
+
+    playersData[playerId] = {
+      name: userName,
+      position: {
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z
+      },
+      rotation: {
+        x: camera.rotation.x,
+        y: camera.rotation.y,
+        z: camera.rotation.z
+      },
+      lastSeen: Date.now()
+    }
+
+    localStorage.setItem(syncKey, JSON.stringify(playersData))
+  } catch {
+    // noop
+  }
+}
+
+function readOtherPlayersPositions(roomName) {
+  try {
+    const syncKey = `PLAYERS_SYNC:${roomName}`
+    return JSON.parse(localStorage.getItem(syncKey) || '{}')
+  } catch {
+    return {}
+  }
+}
+
 function formatCountdown(totalSeconds) {
   const safeSeconds = Math.max(0, totalSeconds)
   const minutes = Math.floor(safeSeconds / 60)
   const seconds = safeSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatElapsedTime(totalSeconds) {
+  const safeSeconds = Math.max(0, totalSeconds)
+  const hours = Math.floor(safeSeconds / 3600)
+  const minutes = Math.floor((safeSeconds % 3600) / 60)
+  const seconds = safeSeconds % 60
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  }
+
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
@@ -82,7 +132,7 @@ function PuzzleLoader() {
   )
 }
 
-function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
+function PuzzleRoom3D({ roomData, onExit, forcePlayerView, onSessionEnd }) {
   // ============ Datos de Sala ============
   // fallback para cuando no hay datos de sala (modo prueba)
   const effectiveRoomData = roomData || {
@@ -100,16 +150,31 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
   const containerRef = useRef(null)
   const controlsRef = useRef(null)
   const onExitRef = useRef(onExit)
+  const onSessionEndRef = useRef(onSessionEnd)
+  const sessionPersistedRef = useRef(false)
   const closingPuzzleRef = useRef(false) // flag para no abrir menú al cerrar puzzle
 
   // Estado de juego
   const [activePuzzle, setActivePuzzle] = useState(null)    // puzzle actualmente abierto
-  const [completedPuzzles, setCompletedPuzzles] = useState(() => readSharedSolvedPuzzles(effectiveRoomData.roomName))  // progreso compartido de sala
+  const [completedPuzzles, setCompletedPuzzles] = useState([])  // progreso compartido de sala
   const [canInteract, setCanInteract] = useState(false)    // si hay objeto interactuable cerca
   const [currentPlayer, setCurrentPlayer] = useState(0)    // jugador mostrado en tabla
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState(0)
   const completedPuzzlesRef = useRef([])
   const hasTimedOutRef = useRef(false)
+  const activePuzzleStartedAtRef = useRef(null)
+  const [sessionStats, setSessionStats] = useState({
+    successes: 0,
+    failures: 0,
+    solvedPuzzleIds: [],
+    totalSolveSeconds: 0
+  })
+  const sessionStatsRef = useRef({
+    successes: 0,
+    failures: 0,
+    solvedPuzzleIds: [],
+    totalSolveSeconds: 0
+  })
 
   // Estado del menú ESC
   const [menuOpen, setMenuOpen] = useState(false)
@@ -128,19 +193,18 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
   const lastSyncTimeRef = useRef(0)  // Para throttle de sincronización
   const playersDataCacheRef = useRef({})  // Cache para evitar actualizaciones innecesarias
   const enterTimeRef = useRef(Date.now())  // Timestamp cuando el jugador entra (grace period para sync)
-  const playersDataFromStorageRef = useRef({})  // Cache de PLAYERS_SYNC del localStorage para animate loop
+  const playersDataFromStorageRef = useRef({})  // Cache del backend para animate loop
   const playerNamesRef = useRef({})  // Cache de nombres para evitar re-renders innecesarios en animate
   
   // Inicializar tabla de progreso de cada jugador basado en quiénes están presentes
   const [playerProgress, setPlayerProgress] = useState(() => {
     const players = []
-    const syncKey = `PLAYERS_SYNC:${effectiveRoomData.roomName}`
-    const playersData = JSON.parse(localStorage.getItem(syncKey) || '{}')
+    const playersData = parseRoomSyncState(effectiveRoomData.activePlayers).players || {}
     
     Object.keys(playersData).forEach(playerIdStr => {
       const playerId = parseInt(playerIdStr)
       if (playersData[playerId]) {
-        const userName = sessionStorage.getItem(`PLAYER_NAME:${effectiveRoomData.roomName}:${playerId}`) || `Jugador ${playerId + 1}`
+        const userName = playersData[playerId]?.name || `Jugador ${playerId + 1}`
         players.push({
           id: playerId,
           name: userName,
@@ -161,6 +225,11 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
     return Number.isNaN(createdAt) ? Date.now() : createdAt
   }, [effectiveRoomData.createdAt])
   const roomTimeLimitSeconds = (effectiveRoomData.maxTime || 30) * 60
+  const sessionElapsedSeconds = Math.floor((Date.now() - enterTimeRef.current) / 1000)
+  const resolvedPuzzleCount = sessionStats.solvedPuzzleIds.length
+  const averageSolveSeconds = resolvedPuzzleCount > 0
+    ? Math.round(sessionStats.totalSolveSeconds / resolvedPuzzleCount)
+    : 0
 
   // Sincronizar menuOpenRef con estado de React
   useEffect(() => {
@@ -172,8 +241,42 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
   }, [onExit])
 
   useEffect(() => {
+    onSessionEndRef.current = onSessionEnd
+  }, [onSessionEnd])
+
+  useEffect(() => {
     completedPuzzlesRef.current = completedPuzzles
   }, [completedPuzzles])
+
+  useEffect(() => {
+    sessionStatsRef.current = sessionStats
+  }, [sessionStats])
+
+  const persistSessionStats = async () => {
+    if (sessionPersistedRef.current) {
+      return
+    }
+
+    sessionPersistedRef.current = true
+
+    if (typeof onSessionEndRef.current !== 'function') {
+      return
+    }
+
+    const latestStats = sessionStatsRef.current
+
+    try {
+      await onSessionEndRef.current({
+        sessionElapsedSeconds: Math.floor((Date.now() - enterTimeRef.current) / 1000),
+        totalSolveSeconds: latestStats.totalSolveSeconds || 0,
+        successes: latestStats.successes || 0,
+        failures: latestStats.failures || 0,
+        puzzlesSolved: latestStats.solvedPuzzleIds?.length || 0
+      })
+    } catch (error) {
+      console.error('Error persistiendo estadisticas de la sesion:', error)
+    }
+  }
 
   useEffect(() => {
     hasTimedOutRef.current = false
@@ -195,28 +298,67 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
   }, [roomStartTimestamp, roomTimeLimitSeconds])
 
   useEffect(() => {
-    const puzzleStateKey = getRoomPuzzleStateKey(effectiveRoomData.roomName)
+    const syncKey = `PLAYERS_SYNC:${effectiveRoomData.roomName}`
 
-    const syncSharedPuzzleState = () => {
-      setCompletedPuzzles(readSharedSolvedPuzzles(effectiveRoomData.roomName))
-    }
+    const pullSyncStateFromBackend = async () => {
+      if (!effectiveRoomData.id) {
+        return
+      }
 
-    syncSharedPuzzleState()
-
-    const handleStorageChange = (event) => {
-      if (event.key === puzzleStateKey) {
-        syncSharedPuzzleState()
+      try {
+        const latestRoom = await getRoom(effectiveRoomData.id)
+        const syncState = parseRoomSyncState(latestRoom.activePlayers)
+        localStorage.setItem(syncKey, JSON.stringify(syncState.players || {}))
+        const remoteSolvedPuzzles = mergeSolvedPuzzles(syncState.solvedPuzzles || [])
+        writeSharedSolvedPuzzles(effectiveRoomData.roomName, remoteSolvedPuzzles)
+        setCompletedPuzzles(remoteSolvedPuzzles)
+      } catch (error) {
+        console.error('Error sincronizando estado remoto de la sala:', error)
       }
     }
 
-    const pollInterval = setInterval(syncSharedPuzzleState, 250)
-    window.addEventListener('storage', handleStorageChange)
+    pullSyncStateFromBackend()
+    const interval = setInterval(pullSyncStateFromBackend, 700)
 
-    return () => {
-      clearInterval(pollInterval)
-      window.removeEventListener('storage', handleStorageChange)
+    return () => clearInterval(interval)
+  }, [effectiveRoomData.id, effectiveRoomData.roomName])
+
+  useEffect(() => {
+    const pushLocalStateToBackend = async () => {
+      if (!effectiveRoomData.id || isKickedRef.current) {
+        return
+      }
+
+      try {
+        const syncKey = `PLAYERS_SYNC:${effectiveRoomData.roomName}`
+        const localPlayers = JSON.parse(localStorage.getItem(syncKey) || '{}')
+        const localPlayerState = localPlayers[myPlayerId]
+        const solvedPuzzles = completedPuzzlesRef.current
+
+        if (!localPlayerState) {
+          return
+        }
+
+        await updateRoomSyncState(effectiveRoomData.id, (syncState) => ({
+          ...syncState,
+          players: {
+            ...syncState.players,
+            [myPlayerId]: {
+              ...syncState.players?.[myPlayerId],
+              ...localPlayerState,
+              lastSeen: Date.now()
+            }
+          },
+          solvedPuzzles: mergeSolvedPuzzles(syncState.solvedPuzzles || [], solvedPuzzles)
+        }))
+      } catch (error) {
+        console.error('Error empujando estado local al backend:', error)
+      }
     }
-  }, [effectiveRoomData.roomName])
+
+    const interval = setInterval(pushLocalStateToBackend, 600)
+    return () => clearInterval(interval)
+  }, [effectiveRoomData.id, effectiveRoomData.roomName, myPlayerId])
 
   // Monitorear cambios en PLAYERS_SYNC con Storage Event Listener
   // Esto es MÁS RÁPIDO que polling porque detects cambios en tiempo real (ms, no 500ms)
@@ -311,7 +453,12 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
     }
 
     try {
-      const updatedRoom = await changeRoomPlayerCount(effectiveRoomData.id, delta)
+      const room = await getRoom(effectiveRoomData.id)
+      const updatedRoom = await updateRoom(effectiveRoomData.id, {
+        ...room,
+        playerCount: Math.max(0, (room.playerCount ?? 0) + delta),
+        lastActivity: Date.now()
+      })
       setRoomPlayerCount(updatedRoom.playerCount ?? 0)
       return updatedRoom
     } catch (error) {
@@ -335,6 +482,18 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
       if (playersData[playerId] !== undefined) {
         delete playersData[playerId]
         localStorage.setItem(syncKey, JSON.stringify(playersData))
+      }
+
+      if (effectiveRoomData.id) {
+        await updateRoomSyncState(effectiveRoomData.id, (syncState) => {
+          const nextPlayers = { ...syncState.players }
+          delete nextPlayers[playerId]
+
+          return {
+            ...syncState,
+            players: nextPlayers
+          }
+        })
       }
 
       // Limpiar sesión del jugador expulsado
@@ -387,6 +546,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
 
     setMenuOpen(false)
     // Llamar onExit para regresar a pantalla principal
+    await persistSessionStats()
     onExit()
   }
 
@@ -404,6 +564,18 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
       if (playersData[myPlayerId] !== undefined) {
         delete playersData[myPlayerId]
         localStorage.setItem(syncKey, JSON.stringify(playersData))
+      }
+
+      if (effectiveRoomData.id) {
+        await updateRoomSyncState(effectiveRoomData.id, (syncState) => {
+          const nextPlayers = { ...syncState.players }
+          delete nextPlayers[myPlayerId]
+
+          return {
+            ...syncState,
+            players: nextPlayers
+          }
+        })
       }
 
       // Limpiar mi sesión
@@ -425,6 +597,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
 
     setMenuOpen(false)
     // Llamar onExit para regresar a pantalla principal
+    await persistSessionStats()
     onExit()
   }
 
@@ -445,6 +618,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
       } catch (error) {
         console.error('Error cerrando sala por tiempo agotado:', error)
       } finally {
+        await persistSessionStats()
         onExitRef.current()
       }
     }
@@ -499,6 +673,13 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
     color: '#fff',
     border: '1px solid #00d4ff',
     boxShadow: '0 0 20px rgba(0, 212, 255, 0.4)'
+  }
+
+  const hudCardStyle = {
+    ...huiPanelStyle,
+    border: '1px solid rgba(0, 212, 255, 0.35)',
+    background: 'linear-gradient(180deg, rgba(3, 10, 18, 0.88) 0%, rgba(5, 18, 31, 0.72) 100%)',
+    backdropFilter: 'blur(10px)'
   }
   // ============ Inicialización de Escena 3D ============
   // El useEffect crea y mantiene la escena 3D, incluyendo:
@@ -855,6 +1036,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
         // Si ya sabemos que fuimos expulsados, salir inmediatamente
         if (isKickedRef.current) {
           console.log(`Detección confirma: Jugador ${myPlayerId} fue expulsado`)
+          await persistSessionStats()
           onExitRef.current()
           return
         }
@@ -866,6 +1048,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
           } catch (error) {
             if (error.status === 404) {
               console.log(`Sala ${effectiveRoomData.roomName} fue cerrada`)
+              await persistSessionStats()
               onExitRef.current()
               return
             }
@@ -881,6 +1064,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
           // El jugador fue expulsado
           isKickedRef.current = true
           console.log(`Jugador ${myPlayerId} fue expulsado de la sala`)
+          await persistSessionStats()
           onExitRef.current()
           return
         }
@@ -916,10 +1100,40 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
     }
   }
 
+  const registerPuzzleSuccess = (amount = 1) => {
+    setSessionStats((prev) => ({
+      ...prev,
+      successes: prev.successes + amount
+    }))
+  }
+
+  const registerPuzzleFailure = (amount = 1) => {
+    setSessionStats((prev) => ({
+      ...prev,
+      failures: prev.failures + amount
+    }))
+  }
+
   /**
    * Marca un puzzle como completado y actualiza puntuación
    */
   const handlePuzzleComplete = (puzzleId) => {
+    const solveDurationSeconds = activePuzzleStartedAtRef.current
+      ? Math.max(1, Math.round((Date.now() - activePuzzleStartedAtRef.current) / 1000))
+      : 0
+
+    setSessionStats((prev) => {
+      if (prev.solvedPuzzleIds.includes(puzzleId)) {
+        return prev
+      }
+
+      return {
+        ...prev,
+        solvedPuzzleIds: [...prev.solvedPuzzleIds, puzzleId],
+        totalSolveSeconds: prev.totalSolveSeconds + solveDurationSeconds
+      }
+    })
+
     const playerIdToUpdate = typeof forcePlayerView === 'number' ? forcePlayerView : myPlayerId
 
     setPlayerProgress(prev => {
@@ -936,13 +1150,20 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
       return newProgress
     })
 
-    const nextSolvedPuzzles = completedPuzzlesRef.current.includes(puzzleId)
-      ? completedPuzzlesRef.current
-      : [...completedPuzzlesRef.current, puzzleId]
+    const nextSolvedPuzzles = mergeSolvedPuzzles(completedPuzzlesRef.current, [puzzleId])
 
     // Puzzle completion is shared per room, not per player.
     writeSharedSolvedPuzzles(effectiveRoomData.roomName, nextSolvedPuzzles)
     setCompletedPuzzles(nextSolvedPuzzles)
+
+    if (effectiveRoomData.id) {
+      updateRoomSyncState(effectiveRoomData.id, (syncState) => ({
+        ...syncState,
+        solvedPuzzles: mergeSolvedPuzzles(syncState.solvedPuzzles || [], nextSolvedPuzzles)
+      })).catch((error) => {
+        console.error('Error sincronizando puzzle completado con backend:', error)
+      })
+    }
 
     // Cambiar a siguiente jugador (modo prueba)
     if (typeof forcePlayerView !== 'number') {
@@ -950,12 +1171,22 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
     }
 
     setActivePuzzle(null)
+    activePuzzleStartedAtRef.current = null
     if (controlsRef.current) {
       setTimeout(() => {
         controlsRef.current.lock()
       }, 100)
     }
   }
+
+  useEffect(() => {
+    if (!activePuzzle) {
+      activePuzzleStartedAtRef.current = null
+      return
+    }
+
+    activePuzzleStartedAtRef.current = Date.now()
+  }, [activePuzzle])
   // ============ Renderizado ============
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative' }}>
@@ -969,7 +1200,7 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
             </h2>
             
             {/* Información de la sala */}
-            <div style={{ fontSize: '12px', marginBottom: '12px', padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '6px' }}>
+            <div style={{ display: 'none', fontSize: '12px', marginBottom: '12px', padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '6px' }}>
               <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>{effectiveRoomData.roomName}</div>
               <div>👥 Jugadores: {activePlayers.length}</div>
               <div>⚡ Dificultad: {effectiveRoomData.difficulty.charAt(0).toUpperCase() + effectiveRoomData.difficulty.slice(1)}</div>
@@ -979,6 +1210,19 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
             </div>
             
             {/* Botón: Continuar jugando */}
+            <div style={{ display: 'none', fontSize: '12px', marginBottom: '12px', padding: '10px', background: 'rgba(0, 212, 255, 0.08)', border: '1px solid rgba(0, 212, 255, 0.35)', borderRadius: '6px' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#00d4ff' }}>
+                Tus estadisticas
+              </div>
+              <div style={{ display: 'grid', gap: '6px' }}>
+                <div>Tiempo en sesion: {formatElapsedTime(sessionElapsedSeconds)}</div>
+                <div>Tiempo promedio por puzzle: {resolvedPuzzleCount > 0 ? formatElapsedTime(averageSolveSeconds) : '--:--'}</div>
+                <div>Aciertos: {sessionStats.successes}</div>
+                <div>Fallos: {sessionStats.failures}</div>
+                <div>Puzzles resueltos: {resolvedPuzzleCount}</div>
+              </div>
+            </div>
+
             <button
               onClick={() => {
                 setMenuOpen(false)
@@ -1066,14 +1310,38 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
         </div>
       )}
 
+      {menuOpen && (
+        <div
+          style={{
+            ...hudCardStyle,
+            top: 20,
+            left: 20,
+            width: '220px',
+            fontSize: 11
+          }}
+        >
+          <div style={{ fontSize: 9, color: '#7dd3fc', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Sesion
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 8 }}>
+            {effectiveRoomData.roomName}
+          </div>
+          <div>Dificultad: {effectiveRoomData.difficulty.charAt(0).toUpperCase() + effectiveRoomData.difficulty.slice(1)}</div>
+          <div>Jugadores activos: {activePlayers.length}</div>
+          <div>Tu usuario: {effectiveRoomData.userName || `Jugador ${myPlayerId + 1}`}</div>
+          <div>Progreso global: {completedPuzzles.length} / {puzzleStations.length}</div>
+          <div>Puerta: {completedPuzzles.length >= puzzleStations.length ? 'Desbloqueada' : 'Bloqueada'}</div>
+        </div>
+      )}
+
       {/* ===== HUD: Tabla de Jugadores (Top-Right) ===== */}
       <div
         style={{
-          ...huiPanelStyle,
+          ...hudCardStyle,
           top: 20,
           right: 20,
           left: 'auto',
-          maxWidth: '200px',
+          width: '220px',
           fontSize: '12px'
         }}
       >
@@ -1100,12 +1368,13 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
 
       <div
         style={{
-          ...huiPanelStyle,
+          ...hudCardStyle,
           top: 20,
           left: '50%',
           transform: 'translateX(-50%)',
           textAlign: 'center',
-          minWidth: '160px'
+          minWidth: '170px',
+          padding: '12px 16px'
         }}
       >
         <div style={{ fontSize: 9, color: '#aaa', marginBottom: 4 }}>Tiempo de sala</div>
@@ -1172,12 +1441,35 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
       </div>
 
       {/* ===== Animación CSS ===== */}
+      {menuOpen && (
+        <div
+          style={{
+            ...hudCardStyle,
+            top: 'auto',
+            bottom: 20,
+            right: 20,
+            left: 'auto',
+            width: '220px',
+            fontSize: 11
+          }}
+        >
+          <div style={{ fontSize: 9, color: '#7dd3fc', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Tu rendimiento
+          </div>
+          <div>Tiempo en sesion: {formatElapsedTime(sessionElapsedSeconds)}</div>
+          <div>Promedio por puzzle: {resolvedPuzzleCount > 0 ? formatElapsedTime(averageSolveSeconds) : '--:--'}</div>
+          <div>Aciertos: {sessionStats.successes}</div>
+          <div>Fallos: {sessionStats.failures}</div>
+          <div>Puzzles resueltos: {resolvedPuzzleCount}</div>
+        </div>
+      )}
+
       <div
         style={{
-          ...huiPanelStyle,
-          top: 20,
+          ...hudCardStyle,
+          top: 170,
           left: 20,
-          maxWidth: '220px',
+          width: '220px',
           fontSize: 11
         }}
       >
@@ -1235,6 +1527,8 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
             roomDifficulty={effectiveRoomData.difficulty}
             onComplete={() => handlePuzzleComplete('nodePuzzle')}
             onSolved={() => handlePuzzleComplete('nodePuzzle')}
+            onSuccess={() => registerPuzzleSuccess(1)}
+            onFail={() => registerPuzzleFailure(1)}
             currentPlayer={myPlayerId + 1}
           />
         </Suspense>
@@ -1245,6 +1539,8 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
           <VossQuiz
             onClose={handlePuzzleClose}
             onComplete={() => handlePuzzleComplete('vossQuiz')}
+            onSuccess={() => registerPuzzleSuccess(1)}
+            onFail={() => registerPuzzleFailure(1)}
           />
         </Suspense>
       )}
@@ -1254,6 +1550,8 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
           <DataReconstructionPuzzle
             onClose={handlePuzzleClose}
             onComplete={() => handlePuzzleComplete('dataReconstruction')}
+            onSuccess={() => registerPuzzleSuccess(1)}
+            onFail={() => registerPuzzleFailure(1)}
           />
         </Suspense>
       )}
@@ -1263,6 +1561,8 @@ function PuzzleRoom3D({ roomData, onExit, forcePlayerView }) {
           <CipherBoardPuzzle
             onClose={handlePuzzleClose}
             onComplete={() => handlePuzzleComplete('cipherBoard')}
+            onSuccess={() => registerPuzzleSuccess(1)}
+            onFail={() => registerPuzzleFailure(1)}
           />
         </Suspense>
       )}

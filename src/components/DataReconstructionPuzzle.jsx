@@ -23,7 +23,7 @@ const TARGET_SEQUENCE = [
   'BLK_08'
 ]
 
-function DataReconstructionPuzzle({ onClose, onComplete }) {
+function DataReconstructionPuzzle({ onClose, onComplete, onSuccess, onFail }) {
   const [selectedBlock, setSelectedBlock] = useState(null)
   const [assembledBlocks, setAssembledBlocks] = useState(Array(8).fill(null))
   const [status, setStatus] = useState('idle')
@@ -63,11 +63,17 @@ function DataReconstructionPuzzle({ onClose, onComplete }) {
     const solved = assembledBlocks.every((block, index) => block === TARGET_SEQUENCE[index])
 
     if (!solved) {
+      if (onFail) {
+        onFail()
+      }
       setStatus('error')
       setMessage('Secuencia incorrecta. Revisa el orden antes de restaurar el archivo.')
       return
     }
 
+    if (onSuccess) {
+      onSuccess()
+    }
     setStatus('success')
     setMessage('Archivo restaurado. Fragmento de algoritmo #3 desbloqueado.')
     if (onComplete) {

@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { useNodePuzzle } from './hooks/useNodePuzzle.js'
 
-function NodePuzzle({ onClose, onSolved, onComplete, currentPlayer }) {
+function NodePuzzle({ onClose, onSolved, onComplete, onSuccess, onFail, currentPlayer }) {
   // Usar el hook personalizado para obtener toda la lógica del juego
   const {
     grid,
@@ -19,12 +19,32 @@ function NodePuzzle({ onClose, onSolved, onComplete, currentPlayer }) {
 
   const TIME_LIMIT = 60 // segundos
   const [timeLeft, setTimeLeft] = useState(TIME_LIMIT)
+  const [failureReported, setFailureReported] = useState(false)
+  const [successReported, setSuccessReported] = useState(false)
 
   useEffect(() => {
-    if (!isWon) return
+    if (!isWon || successReported) return
+
+    if (onSuccess) {
+      onSuccess()
+    }
+
+    setSuccessReported(true)
     if (onComplete) onComplete()
     else if (onSolved) onSolved()
-  }, [isWon, onComplete, onSolved])
+  }, [isWon, onComplete, onSolved, onSuccess, successReported])
+
+  useEffect(() => {
+    const didFail = isGameOver || timeLeft <= 0
+    if (!didFail || failureReported || isWon) {
+      return
+    }
+
+    if (onFail) {
+      onFail()
+    }
+    setFailureReported(true)
+  }, [failureReported, isGameOver, isWon, onFail, timeLeft])
 
   // Temporizador del puzzle
   useEffect(() => {

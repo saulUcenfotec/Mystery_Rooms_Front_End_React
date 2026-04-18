@@ -4,7 +4,7 @@ import '../styles/VossQuiz.css'
 
 const INITIAL_TIME_SECONDS = 45 * 60
 
-function VossQuiz({ onClose, onComplete }) {
+function VossQuiz({ onClose, onComplete, onSuccess, onFail }) {
   const scenarios = useMemo(() => VOSS_QUIZ_SCENARIOS, [])
   const [scenarioStates, setScenarioStates] = useState(['pending', 'pending', 'pending'])
   const [failuresByScenario, setFailuresByScenario] = useState([0, 0, 0])
@@ -40,6 +40,10 @@ function VossQuiz({ onClose, onComplete }) {
     const option = scenario.options[optionIndex]
 
     if (option.isCorrect) {
+      if (onSuccess) {
+        onSuccess()
+      }
+
       const nextStates = [...scenarioStates]
       nextStates[scenarioIndex] = 'correct'
       setScenarioStates(nextStates)
@@ -65,6 +69,10 @@ function VossQuiz({ onClose, onComplete }) {
     const nextStates = [...scenarioStates]
     nextStates[scenarioIndex] = 'incorrect'
     setScenarioStates(nextStates)
+
+    if (onFail) {
+      onFail()
+    }
 
     const nextFeedback = [...feedbackByScenario]
     nextFeedback[scenarioIndex] = option.feedback

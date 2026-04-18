@@ -27,7 +27,7 @@ const SYMBOL_TO_LETTER = {
 
 const EXPECTED_CODE = '7-4-SIGMA'
 
-function CipherBoardPuzzle({ onClose, onComplete }) {
+function CipherBoardPuzzle({ onClose, onComplete, onSuccess, onFail }) {
   const [codeInput, setCodeInput] = useState('')
   const [status, setStatus] = useState('idle')
   const [message, setMessage] = useState('Usa la tabla parcial y descifra el mensaje para obtener la combinacion.')
@@ -39,11 +39,17 @@ function CipherBoardPuzzle({ onClose, onComplete }) {
 
   const handleValidate = () => {
     if (codeInput.trim().toUpperCase() !== EXPECTED_CODE) {
+      if (onFail) {
+        onFail()
+      }
       setStatus('error')
       setMessage('Codigo incorrecto. El mensaje sugiere una secuencia concreta.')
       return
     }
 
+    if (onSuccess) {
+      onSuccess()
+    }
     setStatus('success')
     setMessage('Mensaje descifrado. La combinacion correcta es 7-4-SIGMA.')
     if (onComplete) {

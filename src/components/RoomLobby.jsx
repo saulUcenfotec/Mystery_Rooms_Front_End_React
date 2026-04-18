@@ -8,12 +8,28 @@ function RoomLobby({ onJoinRoom, onBack }) {
   const [error, setError] = useState('')
   const [codeInput, setCodeInput] = useState('')
   const [pendingRoom, setPendingRoom] = useState(null)
+  const [roomNameFilter, setRoomNameFilter] = useState('')
+  const [visibilityFilter, setVisibilityFilter] = useState('all')
 
   const loadRooms = async () => {
     try {
       setLoading(true)
       setError('')
-      const response = await listRooms({ hasSpace: true })
+      const filters = { hasSpace: true }
+
+      if (roomNameFilter.trim()) {
+        filters.roomName = roomNameFilter.trim()
+      }
+
+      if (visibilityFilter === 'private') {
+        filters.isPrivate = true
+      }
+
+      if (visibilityFilter === 'public') {
+        filters.isPrivate = false
+      }
+
+      const response = await listRooms(filters)
       setRooms(response)
     } catch (loadError) {
       console.error('Error cargando salas:', loadError)
@@ -27,7 +43,7 @@ function RoomLobby({ onJoinRoom, onBack }) {
     loadRooms()
     const interval = setInterval(loadRooms, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [roomNameFilter, visibilityFilter])
 
   const handleJoinRoom = (room) => {
     if (room.isPrivate) {
@@ -65,6 +81,32 @@ function RoomLobby({ onJoinRoom, onBack }) {
       <div className="room-lobby-card">
         <h1>Unirse a una Sala</h1>
         <p>Selecciona una sala disponible para unirte</p>
+
+        <div className="room-filters">
+          <div className="room-filter-field">
+            <label htmlFor="roomNameFilter">Buscar por nombre</label>
+            <input
+              id="roomNameFilter"
+              type="text"
+              value={roomNameFilter}
+              onChange={(event) => setRoomNameFilter(event.target.value)}
+              placeholder="Ej: sala de Saul"
+            />
+          </div>
+
+          <div className="room-filter-field">
+            <label htmlFor="visibilityFilter">Tipo de sala</label>
+            <select
+              id="visibilityFilter"
+              value={visibilityFilter}
+              onChange={(event) => setVisibilityFilter(event.target.value)}
+            >
+              <option value="all">Todas</option>
+              <option value="public">Publicas</option>
+              <option value="private">Privadas</option>
+            </select>
+          </div>
+        </div>
 
         {pendingRoom && (
           <div style={{

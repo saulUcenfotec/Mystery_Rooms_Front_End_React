@@ -1,10 +1,20 @@
+import { getAuthToken } from './auth.js'
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '')
-const ROOMS_URL = `${API_BASE_URL}/rooms`
+const GAME_ROOMS_ROUTE = '/rooms'
+const ROOMS_URL = `${API_BASE_URL}${GAME_ROOMS_ROUTE}`
+const DEFAULT_ROOM_SYNC_STATE = {
+  players: {},
+  solvedPuzzles: []
+}
 
 async function request(url, options = {}) {
+  const token = getAuthToken()
+
   const response = await fetch(url, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {})
     },
     ...options
@@ -46,6 +56,56 @@ export function buildRoomPayload(room = {}, overrides = {}) {
     lastActivity: room.lastActivity ?? Date.now(),
     ...overrides
   }
+}
+
+function sanitizeRoomSyncState(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ...DEFAULT_ROOM_SYNC_STATE }
+  }
+
+  const players = parsed.players && typeof parsed.players === 'object' && !Array.isArray(parsed.players)
+    ? parsed.players
+    : {}
+
+  const solvedPuzzles = Array.isArray(parsed.solvedPuzzles)
+    ? parsed.solvedPuzzles
+    : []
+
+  return {
+    players,
+    solvedPuzzles
+  }
+}
+
+export function parseRoomSyncState(activePlayers) {
+  if (!activePlayers) {
+    return { ...DEFAULT_ROOM_SYNC_STATE }
+  }
+
+  try {
+    const parsed = typeof activePlayers === 'string' ? JSON.parse(activePlayers) : activePlayers
+
+    if (Array.isArray(parsed)) {
+      const players = {}
+      parsed.forEach((playerId) => {
+        players[playerId] = {
+          name: `Jugador ${Number(playerId) + 1}`
+        }
+      })
+      return {
+        players,
+        solvedPuzzles: []
+      }
+    }
+
+    return sanitizeRoomSyncState(parsed)
+  } catch {
+    return { ...DEFAULT_ROOM_SYNC_STATE }
+  }
+}
+
+export function stringifyRoomSyncState(syncState) {
+  return JSON.stringify(sanitizeRoomSyncState(syncState))
 }
 
 export async function createRoom(room) {
@@ -101,6 +161,18 @@ export async function touchRoom(id, overrides = {}) {
   return updateRoom(id, {
     ...room,
     ...overrides,
+    lastActivity: Date.now()
+  })
+}
+
+export async function updateRoomSyncState(id, updater) {
+  const room = await getRoom(id)
+  const currentSyncState = parseRoomSyncState(room.activePlayers)
+  const nextSyncState = sanitizeRoomSyncState(updater(currentSyncState, room) || currentSyncState)
+
+  return updateRoom(id, {
+    ...room,
+    activePlayers: stringifyRoomSyncState(nextSyncState),
     lastActivity: Date.now()
   })
 }
